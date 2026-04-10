@@ -151,3 +151,28 @@ async def run_llm_evaluation(
     except Exception as e:
         logger.error(f"LLM evaluation failed: {e}", exc_info=True)
         return None
+
+
+async def run_audio_llm_evaluation(
+    transcript: str,
+    question_text: str,
+    reference_answer: str,
+    scorecard: Optional[dict],
+    tier1_context: Optional[str] = None,
+    user_name: Optional[str] = None,
+) -> dict:
+    """
+    Run LLM evaluation on an audio submission's transcript using the standard
+    text LLM (same as run_llm_evaluation). No gpt-4o-audio cost — uses the
+    transcript from local Whisper instead.
+
+    Returns same shape as run_llm_evaluation, or None on failure.
+    """
+    return await run_llm_evaluation(
+        user_answer=transcript,
+        question_text=question_text,
+        reference_answer=reference_answer,
+        scorecard=scorecard,
+        tier1_context=tier1_context,
+        user_name=user_name,
+    )
