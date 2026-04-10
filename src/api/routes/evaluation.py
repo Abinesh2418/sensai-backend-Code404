@@ -27,6 +27,114 @@ router = APIRouter()
 human_evaluator = HumanEvaluator()
 
 
+@router.get("/ready-for-evaluation")
+async def get_submissions_ready_for_evaluation(
+    cohort_id: Optional[int] = None,
+    batch_id: Optional[int] = None,
+):
+    """
+    Returns learner submissions (chat_history) that have NOT been evaluated yet.
+    Groups by user + task so the mentor sees one entry per learner per assessment.
+    """
+    from api.config import (
+        chat_history_table_name, evaluations_table_name, tasks_table_name,
+        users_table_name, user_cohorts_table_name, user_batches_table_name,
+        questions_table_name,
+    )
+
+    # Build user filter based on cohort/batch
+    user_filter = ""
+    params: list = []
+    if batch_id:
+        user_filter = f"""
+            AND ch.user_id IN (
+                SELECT ub.user_id FROM {user_batches_table_name} ub
+                WHERE ub.batch_id = ? AND ub.deleted_at IS NULL
+            )
+        """
+        params.append(batch_id)
+    elif cohort_id:
+        user_filter = f"""
+            AND ch.user_id IN (
+                SELECT uc.user_id FROM {user_cohorts_table_name} uc
+                WHERE uc.cohort_id = ? AND uc.role = 'learner' AND uc.deleted_at IS NULL
+            )
+        """
+        params.append(cohort_id)
+
+    # Find user/task pairs that have chat submissions but no final evaluation
+    rows = await execute_db_operation(
+        f"""
+        SELECT ch.user_id, q.task_id
+        FROM {chat_history_table_name} ch
+        JOIN {questions_table_name} q ON ch.question_id = q.id
+        WHERE ch.role = 'user'
+          AND q.task_id IS NOT NULL
+          AND ch.deleted_at IS NULL
+          {user_filter}
+          AND NOT EXISTS (
+              SELECT 1 FROM {evaluations_table_name} e
+              WHERE e.user_id = ch.user_id AND e.task_id = q.task_id
+                AND e.status = 'final' AND e.deleted_at IS NULL
+          )
+        GROUP BY ch.user_id, q.task_id
+        ORDER BY MAX(ch.created_at) DESC
+        """,
+        tuple(params),
+        fetch_all=True,
+    )
+
+    if not rows:
+        return []
+
+    results = []
+    for row in rows:
+        uid, tid = row[0], row[1]
+
+        # Get user name
+        user_row = await execute_db_operation(
+            f"SELECT first_name, last_name FROM {users_table_name} WHERE id = ?",
+            (uid,), fetch_one=True,
+        )
+        user_name = " ".join(filter(None, [user_row[0] or "", user_row[1] or ""])).strip() if user_row else f"User {uid}"
+
+        # Get task title
+        task_row = await execute_db_operation(
+            f"SELECT title FROM {tasks_table_name} WHERE id = ?",
+            (tid,), fetch_one=True,
+        )
+        task_title = task_row[0] if task_row else f"Task {tid}"
+
+        # Count questions answered
+        q_count_row = await execute_db_operation(
+            f"""SELECT COUNT(DISTINCT ch.question_id) FROM {chat_history_table_name} ch
+                JOIN {questions_table_name} q ON ch.question_id = q.id
+                WHERE ch.user_id = ? AND q.task_id = ? AND ch.role = 'user' AND ch.deleted_at IS NULL""",
+            (uid, tid), fetch_one=True,
+        )
+        questions_answered = q_count_row[0] if q_count_row else 0
+
+        # Get latest submission time
+        time_row = await execute_db_operation(
+            f"""SELECT MAX(ch.created_at) FROM {chat_history_table_name} ch
+                JOIN {questions_table_name} q ON ch.question_id = q.id
+                WHERE ch.user_id = ? AND q.task_id = ? AND ch.role = 'user' AND ch.deleted_at IS NULL""",
+            (uid, tid), fetch_one=True,
+        )
+        submitted_at = time_row[0] if time_row else None
+
+        results.append({
+            "user_id": uid,
+            "user_name": user_name,
+            "task_id": tid,
+            "task_title": task_title,
+            "questions_answered": questions_answered,
+            "submitted_at": str(submitted_at) if submitted_at else None,
+        })
+
+    return results
+
+
 # Static paths MUST come before parameterized paths to avoid FastAPI route conflicts
 
 @router.get("/user/{user_id}/task/{task_id}", response_model=Evaluation)

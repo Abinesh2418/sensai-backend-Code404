@@ -524,12 +524,13 @@ async def ai_response_for_question(request: AIChatRequest):
                     )
                     question_details += f"---\n\n**Reference Solution (never to be shared with the learner)**\n\n{answer_as_prompt}\n\n"
                 else:
-                    scorecard_as_prompt = convert_scorecard_to_prompt(
-                        question["scorecard"]
-                    )
-                    question_details += (
-                        f"---\n\n**Scoring Criteria**\n\n{scorecard_as_prompt}\n\n"
-                    )
+                    if question.get("scorecard"):
+                        scorecard_as_prompt = convert_scorecard_to_prompt(
+                            question["scorecard"]
+                        )
+                        question_details += (
+                            f"---\n\n**Scoring Criteria**\n\n{scorecard_as_prompt}\n\n"
+                        )
 
             chat_history = chat_history + new_user_message
 
@@ -600,23 +601,32 @@ async def ai_response_for_question(request: AIChatRequest):
                         # ... means "required"
                         return create_model("Scorecard", **field_definitions)
 
-                    Scorecard = make_scorecard_model(
-                        [
-                            criterion["name"].replace('"', "")
-                            for criterion in question["scorecard"]["criteria"]
-                        ]
-                    )
+                    if question.get("scorecard") and question["scorecard"].get("criteria"):
+                        Scorecard = make_scorecard_model(
+                            [
+                                criterion["name"].replace('"', "")
+                                for criterion in question["scorecard"]["criteria"]
+                            ]
+                        )
 
-                    class Output(BaseModel):
-                        chain_of_thought: str = Field(
-                            description="Concise analysis of the student's response and what the scorecard should be."
-                        )
-                        feedback: str = Field(
-                            description="A single, comprehensive summary based on the scoring criteria; address the student by name if their name has been provided."
-                        )
-                        scorecard: Optional[Scorecard] = Field(
-                            description="Score and feedback for each criterion from the scoring criteria; only include this in the response if the student's response is a valid response to the task"
-                        )
+                        class Output(BaseModel):
+                            chain_of_thought: str = Field(
+                                description="Concise analysis of the student's response and what the scorecard should be."
+                            )
+                            feedback: str = Field(
+                                description="A single, comprehensive summary based on the scoring criteria; address the student by name if their name has been provided."
+                            )
+                            scorecard: Optional[Scorecard] = Field(
+                                description="Score and feedback for each criterion from the scoring criteria; only include this in the response if the student's response is a valid response to the task"
+                            )
+                    else:
+                        class Output(BaseModel):
+                            chain_of_thought: str = Field(
+                                description="Concise analysis of the student's response."
+                            )
+                            feedback: str = Field(
+                                description="A single, comprehensive summary; address the student by name if their name has been provided."
+                            )
 
             else:
 
@@ -721,21 +731,9 @@ async def ai_response_for_question(request: AIChatRequest):
                     q_max = 100.0
                     q_pass = 60.0
 
-                import asyncio
-                asyncio.create_task(run_evaluation_pipeline(
-                    user_id=request.user_id,
-                    task_id=request.task_id,
-                    org_id=task.get("org_id", 1) if isinstance(task, dict) else 1,
-                    llm_output=llm_output,
-                    submission_content=request.user_response,
-                    max_score=q_max,
-                    pass_score=q_pass,
-                    question_id=request.question_id,
-                    question_type=str(q_type) if q_type else None,
-                    scorecard=scorecard_data,
-                    reference_answers=ref_answers,
-                    model_name=model,
-                ))
+                # Evaluation engine is mentor-triggered, not auto-run.
+                # Mentors use /evaluations/run-engine/{user_id}/{task_id} to evaluate.
+                pass
 
     # Return a streaming response
     return StreamingResponse(
@@ -1041,21 +1039,9 @@ async def ai_response_for_assignment(request: AIChatRequest):
                 eval_status = llm_output.get("evaluation_status")
                 # Only trigger when evaluation has scores (completed or has key_area_scores)
                 if eval_status in ("completed", "needs_resubmission") or llm_output.get("key_area_scores") or llm_output.get("assignment_score"):
-                    import asyncio
-                    asyncio.create_task(run_evaluation_pipeline(
-                        user_id=request.user_id,
-                        task_id=request.task_id,
-                        org_id=task.get("org_id", 1) if isinstance(task, dict) else 1,
-                        llm_output=llm_output,
-                        submission_content=request.user_response,
-                        max_score=evaluation_criteria.get("max_score", 100),
-                        pass_score=evaluation_criteria.get("pass_score", 60),
-                        question_type="assignment",
-                        scorecard=scorecard,
-                        evaluation_criteria=evaluation_criteria,
-                        reference_answers=[],
-                        model_name=model,
-                    ))
+                    # Evaluation engine is mentor-triggered, not auto-run.
+                    # Mentors use /evaluations/run-engine/{user_id}/{task_id} to evaluate.
+                    pass
 
     # Return a streaming response
     return StreamingResponse(
