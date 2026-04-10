@@ -32,6 +32,9 @@ from api.config import (
     integrations_table_name,
     assignment_table_name,
     bq_sync_table_name,
+    evaluations_table_name,
+    evaluation_signals_table_name,
+    evaluator_trust_table_name,
 )
 from api.db.migration import run_migrations
 
@@ -647,6 +650,128 @@ async def create_code_drafts_table(cursor):
     )
 
 
+async def create_evaluations_table(cursor):
+    await cursor.execute(
+        f"""CREATE TABLE IF NOT EXISTS {evaluations_table_name} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                task_id INTEGER NOT NULL,
+                question_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending',
+                final_score REAL,
+                max_score REAL NOT NULL,
+                pass_score REAL NOT NULL,
+                explanation TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                deleted_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES {users_table_name}(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES {tasks_table_name}(id) ON DELETE CASCADE,
+                FOREIGN KEY (question_id) REFERENCES {questions_table_name}(id) ON DELETE CASCADE
+            )"""
+    )
+
+    await cursor.execute(
+        f"""CREATE INDEX IF NOT EXISTS idx_evaluation_user_task
+            ON {evaluations_table_name} (user_id, task_id)"""
+    )
+
+    await cursor.execute(
+        f"""CREATE INDEX IF NOT EXISTS idx_evaluation_user_question
+            ON {evaluations_table_name} (user_id, question_id)"""
+    )
+
+    await cursor.execute(
+        f"""CREATE INDEX IF NOT EXISTS idx_evaluation_status
+            ON {evaluations_table_name} (status)"""
+    )
+
+    trigger_name = f"set_updated_at_{evaluations_table_name}"
+    await cursor.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+    await cursor.execute(
+        f"""
+        CREATE TRIGGER {trigger_name}
+        AFTER UPDATE ON {evaluations_table_name}
+        FOR EACH ROW
+        BEGIN
+            UPDATE {evaluations_table_name}
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = NEW.id;
+        END;
+        """
+    )
+
+
+async def create_evaluation_signals_table(cursor):
+    await cursor.execute(
+        f"""CREATE TABLE IF NOT EXISTS {evaluation_signals_table_name} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                evaluation_id INTEGER NOT NULL,
+                evaluator_type TEXT NOT NULL,
+                evaluator_id TEXT,
+                score REAL,
+                max_score REAL,
+                normalized_score REAL,
+                confidence REAL,
+                weight REAL,
+                criteria_scores TEXT,
+                feedback TEXT,
+                metadata TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                deleted_at DATETIME,
+                FOREIGN KEY (evaluation_id) REFERENCES {evaluations_table_name}(id) ON DELETE CASCADE
+            )"""
+    )
+
+    await cursor.execute(
+        f"""CREATE INDEX IF NOT EXISTS idx_eval_signal_evaluation_id
+            ON {evaluation_signals_table_name} (evaluation_id)"""
+    )
+
+    await cursor.execute(
+        f"""CREATE INDEX IF NOT EXISTS idx_eval_signal_evaluator_type
+            ON {evaluation_signals_table_name} (evaluator_type)"""
+    )
+
+
+async def create_evaluator_trust_table(cursor):
+    await cursor.execute(
+        f"""CREATE TABLE IF NOT EXISTS {evaluator_trust_table_name} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                org_id INTEGER NOT NULL,
+                evaluator_type TEXT NOT NULL,
+                trust_weight REAL NOT NULL,
+                total_agreements REAL NOT NULL DEFAULT 0,
+                total_evaluations INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(org_id, evaluator_type),
+                FOREIGN KEY (org_id) REFERENCES {organizations_table_name}(id) ON DELETE CASCADE
+            )"""
+    )
+
+    await cursor.execute(
+        f"""CREATE INDEX IF NOT EXISTS idx_evaluator_trust_org_id
+            ON {evaluator_trust_table_name} (org_id)"""
+    )
+
+    trigger_name = f"set_updated_at_{evaluator_trust_table_name}"
+    await cursor.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")
+    await cursor.execute(
+        f"""
+        CREATE TRIGGER {trigger_name}
+        AFTER UPDATE ON {evaluator_trust_table_name}
+        FOR EACH ROW
+        BEGIN
+            UPDATE {evaluator_trust_table_name}
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = NEW.id;
+        END;
+        """
+    )
+
+
 async def init_db():
     # Ensure the database folder exists
     db_folder = os.path.dirname(sqlite_db_path)
@@ -709,6 +834,12 @@ async def init_db():
             await create_assignment_table(cursor)
 
             await create_bq_sync_table(cursor)
+
+            await create_evaluations_table(cursor)
+
+            await create_evaluation_signals_table(cursor)
+
+            await create_evaluator_trust_table(cursor)
 
             await conn.commit()
 

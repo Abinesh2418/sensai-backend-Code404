@@ -60,6 +60,11 @@ code_drafts_table_name = "code_drafts"
 integrations_table_name = "integrations"
 bq_sync_table_name = "bq_sync"
 assignment_table_name = "assignment"
+evaluations_table_name = "evaluations"
+evaluation_signals_table_name = "evaluation_signals"
+evaluator_trust_table_name = "evaluator_trust"
+
+DEFAULT_TRUST_WEIGHTS = {"ai": 0.50, "embedding": 0.30, "human": 0.20}
 
 UPLOAD_FOLDER_NAME = "uploads"
 

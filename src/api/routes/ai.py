@@ -43,6 +43,7 @@ from api.prompts.objective_question import OBJECTIVE_QUESTION_SYSTEM_PROMPT, OBJ
 from api.prompts.subjective_question import SUBJECTIVE_QUESTION_SYSTEM_PROMPT, SUBJECTIVE_QUESTION_USER_PROMPT
 from api.prompts.doubt_solving import DOUBT_SOLVING_SYSTEM_PROMPT, DOUBT_SOLVING_USER_PROMPT
 from api.prompts.assignment import ASSIGNMENT_SYSTEM_PROMPT, ASSIGNMENT_USER_PROMPT
+from api.evaluators.pipeline import run_evaluation_pipeline
 
 router = APIRouter()
 
@@ -702,6 +703,40 @@ async def ai_response_for_question(request: AIChatRequest):
                 output=llm_output,
             )
 
+            # Trigger evaluation pipeline (non-blocking) for quiz questions
+            if request.task_type == TaskType.QUIZ and isinstance(llm_output, dict):
+                q_type = question.get("type") if isinstance(question, dict) else None
+                scorecard_data = question.get("scorecard") if isinstance(question, dict) else None
+
+                # Build reference answers from question's answer field
+                ref_answers = []
+                if q_type == QuestionType.OBJECTIVE and question.get("answer"):
+                    ref_answers = [construct_description_from_blocks(question["answer"])]
+
+                # Determine max_score and pass_score
+                if scorecard_data and scorecard_data.get("criteria"):
+                    q_max = sum(c.get("max_score", 0) for c in scorecard_data["criteria"])
+                    q_pass = sum(c.get("pass_score", 0) for c in scorecard_data["criteria"])
+                else:
+                    q_max = 100.0
+                    q_pass = 60.0
+
+                import asyncio
+                asyncio.create_task(run_evaluation_pipeline(
+                    user_id=request.user_id,
+                    task_id=request.task_id,
+                    org_id=task.get("org_id", 1) if isinstance(task, dict) else 1,
+                    llm_output=llm_output,
+                    submission_content=request.user_response,
+                    max_score=q_max,
+                    pass_score=q_pass,
+                    question_id=request.question_id,
+                    question_type=str(q_type) if q_type else None,
+                    scorecard=scorecard_data,
+                    reference_answers=ref_answers,
+                    model_name=model,
+                ))
+
     # Return a streaming response
     return StreamingResponse(
         stream_response(),
@@ -1000,6 +1035,27 @@ async def ai_response_for_assignment(request: AIChatRequest):
                 input=llm_input,
                 output=llm_output,
             )
+
+            # Trigger evaluation pipeline (non-blocking) for assignments
+            if isinstance(llm_output, dict):
+                eval_status = llm_output.get("evaluation_status")
+                # Only trigger when evaluation has scores (completed or has key_area_scores)
+                if eval_status in ("completed", "needs_resubmission") or llm_output.get("key_area_scores") or llm_output.get("assignment_score"):
+                    import asyncio
+                    asyncio.create_task(run_evaluation_pipeline(
+                        user_id=request.user_id,
+                        task_id=request.task_id,
+                        org_id=task.get("org_id", 1) if isinstance(task, dict) else 1,
+                        llm_output=llm_output,
+                        submission_content=request.user_response,
+                        max_score=evaluation_criteria.get("max_score", 100),
+                        pass_score=evaluation_criteria.get("pass_score", 60),
+                        question_type="assignment",
+                        scorecard=scorecard,
+                        evaluation_criteria=evaluation_criteria,
+                        reference_answers=[],
+                        model_name=model,
+                    ))
 
     # Return a streaming response
     return StreamingResponse(

@@ -799,3 +799,100 @@ class UpdateIntegrationRequest(BaseModel):
     access_token: str | None = None
     refresh_token: str | None = None
     expires_at: datetime | None = None
+
+
+# --- Multi-Modal Evaluation Engine ---
+
+
+class EvaluationStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    PROVISIONAL = "provisional"
+    FINAL = "final"
+
+    def __str__(self):
+        return self.value
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.value == other
+        elif isinstance(other, EvaluationStatus):
+            return self.value == other.value
+        return False
+
+
+class EvaluatorType(str, Enum):
+    AI = "ai"
+    EMBEDDING = "embedding"
+    HUMAN = "human"
+
+    def __str__(self):
+        return self.value
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.value == other
+        elif isinstance(other, EvaluatorType):
+            return self.value == other.value
+        return False
+
+
+class EvaluationSignalModel(BaseModel):
+    id: Optional[int] = None
+    evaluation_id: int
+    evaluator_type: EvaluatorType
+    evaluator_id: Optional[str] = None
+    score: Optional[float] = None
+    max_score: Optional[float] = None
+    normalized_score: Optional[float] = None
+    confidence: Optional[float] = None
+    weight: Optional[float] = None
+    criteria_scores: Optional[Dict] = None
+    feedback: Optional[str] = None
+    metadata: Optional[Dict] = None
+    created_at: Optional[str] = None
+
+
+class Evaluation(BaseModel):
+    id: int
+    user_id: int
+    task_id: int
+    question_id: Optional[int] = None
+    status: EvaluationStatus
+    final_score: Optional[float] = None
+    max_score: float
+    pass_score: float
+    explanation: Optional[Dict] = None
+    signals: Optional[List[EvaluationSignalModel]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class EvaluatorTrust(BaseModel):
+    id: Optional[int] = None
+    org_id: int
+    evaluator_type: EvaluatorType
+    trust_weight: float
+    total_agreements: float = 0.0
+    total_evaluations: int = 0
+    updated_at: Optional[str] = None
+
+
+class TriggerEvaluationRequest(BaseModel):
+    user_id: int
+    task_id: int
+    question_id: Optional[int] = None
+    submission_content: str
+
+
+class SubmitHumanFeedbackRequest(BaseModel):
+    reviewer_user_id: int
+    criteria_feedback: Optional[Dict[str, str]] = None
+    criteria_scores: Optional[Dict[str, float]] = None
+    max_score_per_criterion: Optional[float] = 10.0
+    overall_feedback: str
+
+
+class UpdateTrustWeightsRequest(BaseModel):
+    ai: Optional[float] = None
+    embedding: Optional[float] = None

@@ -231,5 +231,28 @@ async def cleanup_invalid_chat_history():
         await conn.commit()
 
 
+async def create_evaluation_tables_migration():
+    """
+    Migration: Creates the evaluations, evaluation_signals, and evaluator_trust tables
+    for the multi-modal evaluation engine.
+    """
+    from api.utils.db import get_new_db_connection
+    from api.db import (
+        create_evaluations_table,
+        create_evaluation_signals_table,
+        create_evaluator_trust_table,
+    )
+
+    async with get_new_db_connection() as conn:
+        cursor = await conn.cursor()
+
+        await create_evaluations_table(cursor)
+        await create_evaluation_signals_table(cursor)
+        await create_evaluator_trust_table(cursor)
+
+        await conn.commit()
+
+
 async def run_migrations():
     await cleanup_invalid_chat_history()
+    await create_evaluation_tables_migration()
